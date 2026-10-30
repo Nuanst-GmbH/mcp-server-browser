@@ -1,26 +1,26 @@
-# --- source / build inputs (not needed at runtime) ---
-.vscode/
+# The VSIX ships dist/extension.js, dist/server.js, vendor/playwright,
+# vendor/playwright-core, plus the manifest, README, LICENSE, CHANGELOG,
+# SUPPORT, PRIVACY, and icon.png. Playwright cannot be bundled: its driver
+# resolves files inside its own package.
+.vscode/**
+.git/**
 .gitignore
-.git/
-src/
-scripts/
-tsconfig.json
+.vscodeignore
+.github/**
+src/**
+test/**
+docs-local/**
+scripts/**
+node_modules/**
 esbuild.mjs
-dist/*.map
-.github/
-.gitattributes
-FEATURE-REQUEST.md
-LOCAL-NOTES.md
+tsconfig.json
+package-lock.json
+AGENTS.md
 PUBLISHING.md
-
-# --- misc ---
-*.log
+FEATURE-REQUEST.md
+ROADMAP.md
 *.vsix
+*.vsixmap
+**/*.map
+**/*.log
 .DS_Store
-
-node_modules/@types/
-
-# NOTE: node_modules IS intentionally shipped — the MCP server
-# (@modelcontextprotocol/sdk, playwright, zod) must be resolvable at runtime.
-# dist/server.js is the entry point referenced by contributes.mcp;
-# dist/extension.js is the extension host entry referenced by "main".

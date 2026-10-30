@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as net from "node:net";
 import * as fs from "node:fs";
 import { hostPipePath } from "./bridge.js";
+import { BUG_REPORT_URL, buildDiagnostics, reportIssueUrl } from "./issueReport.js";
 
 // Extension host side of the browser-tab bridge.
 //
@@ -15,7 +16,7 @@ import { hostPipePath } from "./bridge.js";
 // proposal check. On a stable VS Code build, the manifest's
 // `enabledApiProposals` is honored only in extension-development mode; for a
 // normally installed extension the user must start VS Code with
-// `--enable-proposed-api nuanst-one.mcp-server-browser` (or the
+// `--enable-proposed-api Nuanst-GmbH.mcp-server-browser` (or the
 // `enable-proposed-api` entry in argv.json). Therefore NOTHING proposed is
 // touched unless the setting is on, and even then the whole start is wrapped
 // so an unavailable proposal degrades to a warning + one-click fix instead of
@@ -346,6 +347,53 @@ export function activate(context: vscode.ExtensionContext): void {
 
   const enable = (): Thenable<void> => enableProposal(extId, out);
   disposables.push(vscode.commands.registerCommand("browserTool.enableBrowserTabApi", enable));
+
+  // Opens the GitHub bug form with a diagnostics draft. The draft is not
+  // uploaded until the user submits it. See PRIVACY.md for the field list.
+  disposables.push(
+    vscode.commands.registerCommand("browserTool.reportIssue", async () => {
+      const manifestBugs = context.extension.packageJSON?.bugs;
+      const templateUrl =
+        typeof manifestBugs === "object" &&
+        manifestBugs &&
+        typeof manifestBugs.url === "string" &&
+        manifestBugs.url.startsWith("https://")
+          ? manifestBugs.url
+          : BUG_REPORT_URL;
+      const diagnostics = buildDiagnostics({
+        extensionVersion: String(context.extension.packageJSON.version ?? ""),
+        vscodeVersion: vscode.version,
+        appName: vscode.env.appName,
+        uiKind: vscode.env.uiKind === vscode.UIKind.Web ? "web" : "desktop",
+        remoteName: vscode.env.remoteName ?? "",
+        platform: process.platform,
+        arch: process.arch,
+        browserTab: vscode.workspace.getConfiguration().get<boolean>(SETTING, false),
+        browserApi: typeof openTab === "function",
+      });
+      const choice = await vscode.window.showInformationMessage(
+        "Open a public GitHub issue? The draft includes the extension version, VS Code version and product name, whether the window is desktop or web, OS and CPU architecture, the remote type (not a hostname), the browser tab setting, and whether the integrated browser API is available. You can edit the draft before submitting. Nothing is uploaded until you create the issue.",
+        { modal: true },
+        "Open issue",
+        "Copy diagnostics",
+      );
+      if (!choice) return;
+      if (choice === "Copy diagnostics") {
+        await vscode.env.clipboard.writeText(diagnostics);
+        out.appendLine("Report Issue: diagnostics copied.");
+        void vscode.window.showInformationMessage("MCP Server: Browser: diagnostics copied");
+        return;
+      }
+      out.appendLine("Report Issue: opening GitHub issue draft.");
+      const opened = await vscode.env.openExternal(vscode.Uri.parse(reportIssueUrl(templateUrl, diagnostics)));
+      if (!opened) {
+        await vscode.env.clipboard.writeText(diagnostics);
+        void vscode.window.showErrorMessage(
+          "MCP Server: Browser: could not open the browser. Diagnostics were copied — paste them into a GitHub issue.",
+        );
+      }
+    }),
+  );
 
   const update = (): void => {
     const enabled = vscode.workspace.getConfiguration().get<boolean>(SETTING, false);

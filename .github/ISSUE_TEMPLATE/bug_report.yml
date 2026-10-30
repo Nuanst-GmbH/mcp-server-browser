@@ -1,0 +1,36 @@
+name: Bug report
+description: MCP Server: Browser did not work as expected.
+title: ""
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Prefer **MCP Server: Browser: Report Issue** in VS Code. It fills in Diagnostics for you.
+
+        The issue is public once you submit it. Delete anything you do not want published. The exact list of what that command gathers is in [PRIVACY.md](https://github.com/Nuanst-GmbH/mcp-server-browser/blob/main/PRIVACY.md).
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Filled by MCP Server: Browser — Report Issue. Review it before you submit.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: reviewed
+    attributes:
+      label: Before you submit
+      options:
+        - label: I reviewed the diagnostics and removed anything I do not want on a public issue.
+          required: true

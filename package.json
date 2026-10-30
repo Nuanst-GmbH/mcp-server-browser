@@ -2,8 +2,8 @@
   "name": "mcp-server-browser",
   "displayName": "MCP Server: Browser",
   "description": "MCP browser tools for AI agents: a headless Chromium opens pages and performs clicks, typing, JS evaluation, and screenshots.",
-  "version": "0.3.0",
-  "publisher": "nuanst-one",
+  "version": "0.4.0",
+  "publisher": "Nuanst-GmbH",
   "author": "Nuanst One GmbH",
   "license": "MIT",
   "homepage": "https://github.com/Nuanst-GmbH/mcp-server-browser#readme",
@@ -12,7 +12,7 @@
     "url": "https://github.com/Nuanst-GmbH/mcp-server-browser.git"
   },
   "bugs": {
-    "url": "https://github.com/Nuanst-GmbH/mcp-server-browser/issues"
+    "url": "https://github.com/Nuanst-GmbH/mcp-server-browser/issues/new?template=bug_report.yml"
   },
   "icon": "icon.png",
   "main": "./dist/extension.js",
@@ -41,15 +41,22 @@
     "model context protocol"
   ],
   "galleryBanner": {
-    "color": "#1e293b",
+    "color": "#47704c",
     "theme": "dark"
   },
-  "qna": false,
+  "pricing": "Free",
+  "qna": "https://github.com/Nuanst-GmbH/mcp-server-browser/blob/main/SUPPORT.md",
   "contributes": {
     "commands": [
       {
         "command": "browserTool.enableBrowserTabApi",
         "title": "Enable browser tab integration (opens argv.json)",
+        "category": "Browser Tool"
+      },
+      {
+        "command": "browserTool.reportIssue",
+        "title": "MCP Server: Browser: Report Issue",
+        "icon": "$(bug)",
         "category": "Browser Tool"
       }
     ],
@@ -78,15 +85,18 @@
     ]
   },
   "scripts": {
-    "build": "node esbuild.mjs",
-    "typecheck": "tsc --noEmit",
+    "check": "tsc --noEmit",
+    "compile": "node esbuild.mjs && node scripts/vendor-playwright.mjs",
+    "build": "npm run compile",
+    "typecheck": "npm run check",
+    "test": "node test/run.mjs",
     "mcp": "node dist/server.js",
     "playwright:install": "playwright install chromium",
     "testpage": "node scripts/testpage.js",
     "icon": "node scripts/make-icon.mjs",
     "package": "vsce package",
     "publish": "vsce publish",
-    "vscode:prepublish": "npm run build"
+    "vscode:prepublish": "npm run compile"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
@@ -96,7 +106,7 @@
   "devDependencies": {
     "@types/node": "^26.6.5",
     "@types/vscode": "1.104.0",
-    "@vscode/vsce": "^3.2.0",
+    "@vscode/vsce": "^4.1.0",
     "esbuild": "^0.28.2",
     "typescript": "~5.9.3"
   }

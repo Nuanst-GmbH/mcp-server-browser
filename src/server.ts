@@ -349,7 +349,7 @@ async function acquireEngine(): Promise<{ engine: Engine } | { noPage: true }> {
 // Server
 // ---------------------------------------------------------------------------
 
-const server = new McpServer({ name: "browser-tool", version: "0.3.0" });
+const server = new McpServer({ name: "browser-tool", version: "0.4.0" });
 
 server.registerTool(
   "open_url",

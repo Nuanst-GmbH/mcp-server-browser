@@ -4,6 +4,18 @@ All notable changes to the **MCP Server: Browser** extension are documented here
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-30
+
+### Added
+
+- **MCP Server: Browser: Report Issue** opens the GitHub bug-report form with a diagnostics draft. The draft is described in the README and in `PRIVACY.md`. It is not uploaded until you submit the issue.
+- GitHub issue form (`.github/ISSUE_TEMPLATE/bug_report.yml`) and a Support link on the new-issue page.
+
+### Changed
+
+- Publisher ID is `Nuanst-GmbH`.
+- Marketplace releases publish from GitHub Actions with Trusted Publishing (`publish.yml`, tag `v` plus the version).
+
 ## [0.3.0] - 2026-10-15
 
 ### Added
@@ -92,3 +104,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `BROWSER_TOOL_GL=swiftshader` env var to fix blank `<canvas>` in some SPAs.
 - E2E smoke test (`scripts/e2e.mjs`) driving the server over stdio against a
   local test page (`npm run testpage`).
+
+[0.4.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.4.0
+[0.3.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.3.0
+[0.2.2]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.2.2
+[0.2.1]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.2.1
+[0.2.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.2.0
+[0.1.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.1.0

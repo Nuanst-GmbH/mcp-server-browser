@@ -6,13 +6,13 @@
   "publisher": "nuanst-one",
   "author": "Nuanst One GmbH",
   "license": "MIT",
-  "homepage": "https://github.com/nuanst-one/mcp-server-browser#readme",
+  "homepage": "https://github.com/Nuanst-GmbH/mcp-server-browser#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/nuanst-one/mcp-server-browser.git"
+    "url": "https://github.com/Nuanst-GmbH/mcp-server-browser.git"
   },
   "bugs": {
-    "url": "https://github.com/nuanst-one/mcp-server-browser/issues"
+    "url": "https://github.com/Nuanst-GmbH/mcp-server-browser/issues"
   },
   "icon": "icon.png",
   "main": "./dist/extension.js",

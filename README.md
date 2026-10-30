@@ -185,4 +185,4 @@ read `#count`, and screenshot it."*
 
 [MIT](LICENSE) © Nuanst One GmbH
 
-Source and issues: <https://github.com/nuanst-one/mcp-server-browser>
+Source and issues: <https://github.com/Nuanst-GmbH/mcp-server-browser>

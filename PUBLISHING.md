@@ -4,12 +4,12 @@
 
 The `repository`, `homepage`, and `bugs` fields in `package.json` point at:
 
-`https://github.com/nuanst-one/mcp-server-browser`
+`https://github.com/Nuanst-GmbH/mcp-server-browser`
 
 Create that repository as **public** (the Marketplace listing links `LICENSE` and the README from it), then push `main`. History in this checkout is a single initial commit, so the first push is a normal push, not a force-push.
 
 ```bash
-git remote add origin https://github.com/nuanst-one/mcp-server-browser.git
+git remote add origin https://github.com/Nuanst-GmbH/mcp-server-browser.git
 git push -u origin main
 ```
 

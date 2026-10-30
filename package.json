@@ -95,7 +95,7 @@
     "testpage": "node scripts/testpage.js",
     "icon": "node scripts/make-icon.mjs",
     "package": "vsce package",
-    "publish": "vsce publish",
+    "publish": "vsce publish --allow-proposed-apis browser",
     "vscode:prepublish": "npm run compile"
   },
   "dependencies": {

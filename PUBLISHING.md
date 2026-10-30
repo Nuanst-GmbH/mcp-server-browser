@@ -3,7 +3,7 @@
 GitHub owner and Marketplace publisher are `Nuanst-GmbH`.
 `repository`, `homepage`, `bugs` (the bug-report form), and `qna` (`SUPPORT.md`) point at `https://github.com/Nuanst-GmbH/mcp-server-browser`.
 
-Publishing runs from `.github/workflows/publish.yml` when a GitHub Release is published. The tag is `v` plus `package.json` `version`. The workflow uses `npx @vscode/vsce publish --oidc`. No PAT is stored in the repo.
+Publishing runs from `.github/workflows/publish.yml` when a GitHub Release is published. The tag is `v` plus `package.json` `version`. The workflow uses `npx @vscode/vsce publish --oidc --allow-proposed-apis browser`. The `browser` proposal is declared in `enabledApiProposals`, so publish has to name it. No PAT is stored in the repo.
 
 Trusted Publishing policy on publisher `Nuanst-GmbH`:
 

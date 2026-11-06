@@ -276,8 +276,11 @@ export type TabStatusResponse =
   | { ok: false; error: string };
 
 // Ask the extension host whether the integrated tab is present and its CDP
-// session is alive — the gate for using the tab as the primary engine.
-export function probeTabStatus(timeoutMs = 2000): Promise<TabStatusResponse> {
+// session answers a command. A dead target is reopened before the host
+// answers, so this timeout covers that recovery, not just the pipe round-trip.
+const TAB_STATUS_TIMEOUT_MS = 20_000;
+
+export function probeTabStatus(timeoutMs = TAB_STATUS_TIMEOUT_MS): Promise<TabStatusResponse> {
   return getBridgePipePath().then(
     (p) =>
       p

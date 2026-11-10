@@ -73,6 +73,8 @@ const TAB_NOTE = ENGINE_NOTE; // alias kept for existing descriptions
 
 const TAB_LABEL = "via integrated tab";
 const TWIN_LABEL = "via headless twin (tab unavailable)";
+let twinUnavailableReason = "";
+let lastTwinNote = "";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -93,7 +95,9 @@ interface Engine {
 
 // Headless Playwright twin — the pre-existing behaviour, wrapped verbatim.
 class TwinEngine implements Engine {
-  readonly label = TWIN_LABEL;
+  get label(): string {
+    return twinUnavailableReason ? `${TWIN_LABEL}: ${twinUnavailableReason}` : TWIN_LABEL;
+  }
 
   async goto(url: string): Promise<{ url: string; title: string }> {
     const pg = await getPage();
@@ -323,10 +327,25 @@ function getTwin(): Engine {
   return twinEngine;
 }
 
-// Use the tab when it is open with a live CDP session, else the twin.
+function noteTwin(reason: string): void {
+  twinUnavailableReason = reason;
+  if (lastTwinNote === reason) return;
+  lastTwinNote = reason;
+  log(`using headless twin (${reason})`);
+}
+
+// Use the tab when it is open with a live page CDP session, else the twin.
 async function resolveEngine(): Promise<Engine> {
   const s = await probeTabStatus();
-  if (s.ok && s.present && s.cdp) return getTab();
+  if (s.ok && s.present && s.cdp) {
+    if (lastTwinNote !== "tab") {
+      lastTwinNote = "tab";
+      log(`using integrated tab${s.url ? ` (${s.url})` : ""}`);
+    }
+    return getTab();
+  }
+  const reason = !s.ok ? s.error : s.reason || (s.present ? "CDP session is not live" : "no integrated tab is open");
+  noteTwin(reason);
   return getTwin();
 }
 
@@ -372,7 +391,7 @@ async function withTabFallback(
     return await run(engine);
   } catch (error) {
     if (!(engine instanceof TabEngine) || !isDeadCdpSessionMessage(errorText(error))) throw error;
-    log(`integrated tab CDP session is dead (${errorText(error)}); using the headless twin for this call`);
+    noteTwin(`CDP session died: ${errorText(error)}`);
     const next = await fallback();
     if ("noPage" in next) return fail(NO_PAGE);
     return run(next);
@@ -458,6 +477,9 @@ server.registerTool(
     if (!res.ok) return fail(`Cookie sync failed: ${res.error}`);
     const r = await addCookies(res.cookies);
     let msg = `Synced ${r.added}/${r.total} cookies from the integrated tab into the headless twin.`;
+    if (res.source === "document") {
+      msg += " Only cookies visible to page script were copied; HttpOnly session cookies were not.";
+    }
     if (r.errors.length) msg += ` Skipped ${r.errors.length}: ${r.errors.slice(0, 3).join("; ")}`;
     if (url) {
       const v = validateUrl(url);

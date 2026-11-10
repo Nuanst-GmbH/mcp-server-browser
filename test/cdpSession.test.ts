@@ -31,8 +31,9 @@ test("returns true when Input.dispatchMouseEvent was not found", () => {
   assert.equal(isDeadCdpSessionMessage("'Input.dispatchMouseEvent' wasn't found", "Input.dispatchMouseEvent"), true);
 });
 
-test("returns true when Network.getCookies reports an unknown method", () => {
-  assert.equal(isDeadCdpSessionMessage("Unknown method: Network.getCookies", "Network.getCookies"), true);
+test("returns false when Network.getCookies is not implemented", () => {
+  assert.equal(isDeadCdpSessionMessage("Method not found: Network.getCookies", "Network.getCookies"), false);
+  assert.equal(isDeadCdpSessionMessage("Unknown method: Network.getCookies", "Network.getCookies"), false);
 });
 
 test("returns true when the execution context was destroyed", () => {

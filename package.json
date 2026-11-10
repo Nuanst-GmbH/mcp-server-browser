@@ -54,23 +54,23 @@
         "category": "Browser Tool"
       },
       {
+        "command": "browserTool.addToClaudeCode",
+        "title": "Add browser-tool to Claude Code",
+        "category": "Browser Tool"
+      },
+      {
         "command": "browserTool.reportIssue",
         "title": "MCP Server: Browser: Report Issue",
         "icon": "$(bug)",
         "category": "Browser Tool"
       }
     ],
-    "mcp": {
-      "servers": [
-        {
-          "label": "browser-tool",
-          "command": "node",
-          "args": [
-            "${extensionPath}/dist/server.js"
-          ]
-        }
-      ]
-    },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "browser-tool",
+        "label": "Browser Tool"
+      }
+    ],
     "configuration": [
       {
         "title": "Browser Tool",

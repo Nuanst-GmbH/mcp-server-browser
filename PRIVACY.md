@@ -2,6 +2,8 @@
 
 MCP Server: Browser does not phone home. It does not send telemetry to Nuanst or to GitHub on its own.
 
+**Browser Tool: Add browser-tool to Claude Code**, and the same offer the first time the extension starts, writes one MCP server entry into the Claude Code user config on this machine (`~/.claude.json`). The entry is the server name `browser-tool`, the command `node`, and the path to this extension's `dist/server.js`. It runs only after you choose Add. If that entry already points at an older install of this extension, a later startup updates the path. The file is not uploaded.
+
 The MCP server talks to VS Code over stdio on this machine. When the browser-tab setting is on, the extension host and that server also talk over a local named pipe. Pages an agent opens make their own requests to those sites. Cookies copied from VS Code's integrated browser into the headless browser stay in that local browser. They are not sent to Nuanst.
 
 ## Report Issue

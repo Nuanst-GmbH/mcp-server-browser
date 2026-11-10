@@ -3,6 +3,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { addCookies, closeAll, getPage, hasPage } from "./browser.js";
 import { cdpSend, probeTabStatus, requestBrowserTab, requestCookies } from "./bridge.js";
+import { isDeadCdpSessionMessage } from "./cdpSession.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -329,20 +330,66 @@ async function resolveEngine(): Promise<Engine> {
   return getTwin();
 }
 
+type NoPage = { noPage: true };
+
+function noPage(): NoPage {
+  return { noPage: true };
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function prepareTwin(): Promise<Engine> {
+  const twin = getTwin();
+  if (hasPage() || !lastUrl) return twin;
+  const seed = lastUrl;
+  await getPage()
+    .then((page) => page.goto(seed, { waitUntil: "domcontentloaded", timeout: 60_000 }))
+    .catch(() => undefined);
+  return twin;
+}
+
 // Resolve an engine for a non-navigation tool. On the twin with no page yet,
 // restore the last URL we saw (so a tab close doesn't drop into a blank page);
 // with no URL to restore, report noPage so the caller can hint to open_url.
-async function acquireEngine(): Promise<{ engine: Engine } | { noPage: true }> {
-  const e = await resolveEngine();
-  if (!(e instanceof TwinEngine) || hasPage()) return { engine: e };
-  if (lastUrl) {
-    const seed = lastUrl;
-    await getPage()
-      .then((pg) => pg.goto(seed, { waitUntil: "domcontentloaded", timeout: 60_000 }))
-      .catch(() => undefined);
-    return { engine: e };
+async function acquireEngine(): Promise<{ engine: Engine } | NoPage> {
+  const engine = await resolveEngine();
+  if (!(engine instanceof TwinEngine)) return { engine };
+  if (!hasPage() && !lastUrl) return noPage();
+  return { engine: await prepareTwin() };
+}
+
+// A stale tab session used to fail every tool with the raw CDP error. If the
+// extension could not revive it, run this call on the twin instead. The next
+// call probes again, so a recovered tab is used without a sticky override.
+async function withTabFallback(
+  engine: Engine,
+  run: (engine: Engine) => Promise<ToolResult>,
+  fallback: () => Promise<Engine | NoPage>,
+): Promise<ToolResult> {
+  try {
+    return await run(engine);
+  } catch (error) {
+    if (!(engine instanceof TabEngine) || !isDeadCdpSessionMessage(errorText(error))) throw error;
+    log(`integrated tab CDP session is dead (${errorText(error)}); using the headless twin for this call`);
+    const next = await fallback();
+    if ("noPage" in next) return fail(NO_PAGE);
+    return run(next);
   }
-  return { noPage: true };
+}
+
+async function runOnResolvedEngine(run: (engine: Engine) => Promise<ToolResult>): Promise<ToolResult> {
+  return withTabFallback(await resolveEngine(), run, async () => getTwin());
+}
+
+async function runOnEngine(run: (engine: Engine) => Promise<ToolResult>): Promise<ToolResult> {
+  const acquired = await acquireEngine();
+  if ("noPage" in acquired) return fail(NO_PAGE);
+  return withTabFallback(acquired.engine, run, async () => {
+    if (!hasPage() && !lastUrl) return noPage();
+    return prepareTwin();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -363,12 +410,14 @@ server.registerTool(
   },
   wrap(async ({ url }) => {
     const v = validateUrl(url);
-    if (v.error) return fail(v.error);
-    const e = await resolveEngine();
-    const r = await e.goto(v.href!);
-    lastUrl = r.url;
-    if (!(e instanceof TabEngine)) void requestBrowserTab(v.href!);
-    return ok(`Opened ${r.url}${r.title ? ` — "${r.title}"` : ""} ${e.label}.`);
+    const href = v.href;
+    if (v.error || href === undefined) return fail(v.error ?? `invalid URL: ${url}`);
+    return runOnResolvedEngine(async (engine) => {
+      const navigated = await engine.goto(href);
+      lastUrl = navigated.url;
+      if (!(engine instanceof TabEngine)) void requestBrowserTab(href);
+      return ok(`Opened ${navigated.url}${navigated.title ? ` — "${navigated.title}"` : ""} ${engine.label}.`);
+    });
   }),
 );
 
@@ -382,12 +431,14 @@ server.registerTool(
   },
   wrap(async ({ url }) => {
     const v = validateUrl(url);
-    if (v.error) return fail(v.error);
-    const e = await resolveEngine();
-    const r = await e.goto(v.href!);
-    lastUrl = r.url;
-    if (!(e instanceof TabEngine)) void requestBrowserTab(v.href!);
-    return ok(`Navigated to ${r.url}${r.title ? ` — "${r.title}"` : ""} ${e.label}.`);
+    const href = v.href;
+    if (v.error || href === undefined) return fail(v.error ?? `invalid URL: ${url}`);
+    return runOnResolvedEngine(async (engine) => {
+      const navigated = await engine.goto(href);
+      lastUrl = navigated.url;
+      if (!(engine instanceof TabEngine)) void requestBrowserTab(href);
+      return ok(`Navigated to ${navigated.url}${navigated.title ? ` — "${navigated.title}"` : ""} ${engine.label}.`);
+    });
   }),
 );
 
@@ -428,12 +479,12 @@ server.registerTool(
     description: "Click an element by CSS selector on the current page.",
     inputSchema: { selector: z.string().min(1) },
   },
-  wrap(async ({ selector }) => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    await ac.engine.click(selector);
-    return ok(`Clicked ${selector} ${ac.engine.label}.`);
-  }),
+  wrap(async ({ selector }) =>
+    runOnEngine(async (engine) => {
+      await engine.click(selector);
+      return ok(`Clicked ${selector} ${engine.label}.`);
+    }),
+  ),
 );
 
 server.registerTool(
@@ -449,14 +500,14 @@ server.registerTool(
       submit: z.boolean().default(false),
     },
   },
-  wrap(async ({ selector, value, submit }) => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    await ac.engine.fill(selector, value, submit);
-    return ok(
-      `Typed ${JSON.stringify(value)} into ${selector}${submit ? " and pressed Enter" : ""} ${ac.engine.label}.`,
-    );
-  }),
+  wrap(async ({ selector, value, submit }) =>
+    runOnEngine(async (engine) => {
+      await engine.fill(selector, value, submit);
+      return ok(
+        `Typed ${JSON.stringify(value)} into ${selector}${submit ? " and pressed Enter" : ""} ${engine.label}.`,
+      );
+    }),
+  ),
 );
 
 server.registerTool(
@@ -469,12 +520,12 @@ server.registerTool(
       value: z.string().min(1),
     },
   },
-  wrap(async ({ selector, value }) => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    await ac.engine.select(selector, value);
-    return ok(`Selected ${JSON.stringify(value)} in ${selector} ${ac.engine.label}.`);
-  }),
+  wrap(async ({ selector, value }) =>
+    runOnEngine(async (engine) => {
+      await engine.select(selector, value);
+      return ok(`Selected ${JSON.stringify(value)} in ${selector} ${engine.label}.`);
+    }),
+  ),
 );
 
 server.registerTool(
@@ -485,12 +536,9 @@ server.registerTool(
       "Read visible text (innerText) of an element by CSS selector, or of the whole page body if no selector given.",
     inputSchema: { selector: z.string().optional() },
   },
-  wrap(async ({ selector }) => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    const text = await ac.engine.text(selector);
-    return ok(truncate(text, TRUNC_TEXT));
-  }),
+  wrap(async ({ selector }) =>
+    runOnEngine(async (engine) => ok(truncate(await engine.text(selector), TRUNC_TEXT))),
+  ),
 );
 
 server.registerTool(
@@ -502,12 +550,9 @@ server.registerTool(
       "Use for inspecting structure, attributes, and building selectors.",
     inputSchema: { selector: z.string().optional() },
   },
-  wrap(async ({ selector }) => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    const html = await ac.engine.html(selector);
-    return ok(truncate(html, TRUNC_HTML));
-  }),
+  wrap(async ({ selector }) =>
+    runOnEngine(async (engine) => ok(truncate(await engine.html(selector), TRUNC_HTML))),
+  ),
 );
 
 server.registerTool(
@@ -517,11 +562,7 @@ server.registerTool(
     description: "Return the current URL of the page.",
     inputSchema: {},
   },
-  wrap(async () => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    return ok(`${await ac.engine.url()} ${ac.engine.label}`);
-  }),
+  wrap(async () => runOnEngine(async (engine) => ok(`${await engine.url()} ${engine.label}`))),
 );
 
 server.registerTool(
@@ -531,11 +572,7 @@ server.registerTool(
     description: "Return the current page title.",
     inputSchema: {},
   },
-  wrap(async () => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    return ok(`${await ac.engine.title()} ${ac.engine.label}`);
-  }),
+  wrap(async () => runOnEngine(async (engine) => ok(`${await engine.title()} ${engine.label}`))),
 );
 
 server.registerTool(
@@ -547,14 +584,13 @@ server.registerTool(
       "Use for reading page state, querying the DOM, or anything the other tools don't cover.",
     inputSchema: { expression: z.string().min(1) },
   },
-  wrap(async ({ expression }) => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    const value: unknown = await ac.engine.evaluate(expression);
-    const text =
-      typeof value === "string" ? value : (JSON.stringify(value) ?? String(value) ?? "undefined");
-    return ok(truncate(text, TRUNC_TEXT));
-  }),
+  wrap(async ({ expression }) =>
+    runOnEngine(async (engine) => {
+      const value: unknown = await engine.evaluate(expression);
+      const text = typeof value === "string" ? value : (JSON.stringify(value) ?? String(value) ?? "undefined");
+      return ok(truncate(text, TRUNC_TEXT));
+    }),
+  ),
 );
 
 server.registerTool(
@@ -569,16 +605,16 @@ server.registerTool(
       timeoutMs: z.number().int().min(1).max(120_000).default(15_000),
     },
   },
-  wrap(async ({ selector, timeoutMs }) => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    const ms = await ac.engine.waitFor(selector, timeoutMs);
-    return ok(
-      selector
-        ? `Selector ${selector} visible after ${ms} ms. ${ac.engine.label}`
-        : `Page load complete after ${ms} ms. ${ac.engine.label}`,
-    );
-  }),
+  wrap(async ({ selector, timeoutMs }) =>
+    runOnEngine(async (engine) => {
+      const ms = await engine.waitFor(selector, timeoutMs);
+      return ok(
+        selector
+          ? `Selector ${selector} visible after ${ms} ms. ${engine.label}`
+          : `Page load complete after ${ms} ms. ${engine.label}`,
+      );
+    }),
+  ),
 );
 
 server.registerTool(
@@ -590,21 +626,20 @@ server.registerTool(
       "Set fullPage=true to capture below the fold. " + TWIN_NOTE,
     inputSchema: { fullPage: z.boolean().default(false) },
   },
-  wrap(async ({ fullPage }) => {
-    const ac = await acquireEngine();
-    if ("noPage" in ac) return fail(NO_PAGE);
-    const e = ac.engine;
-    const [data, u] = await Promise.all([e.screenshot(fullPage), e.url()]);
-    return {
-      content: [
-        { type: "image", data, mimeType: "image/png" },
-        {
-          type: "text",
-          text: `screenshot of ${u} (${fullPage ? "full page" : "viewport"}) ${e.label}. ${ENGINE_NOTE}`,
-        },
-      ],
-    };
-  }),
+  wrap(async ({ fullPage }) =>
+    runOnEngine(async (engine) => {
+      const [data, pageUrl] = await Promise.all([engine.screenshot(fullPage), engine.url()]);
+      return {
+        content: [
+          { type: "image", data, mimeType: "image/png" },
+          {
+            type: "text",
+            text: `screenshot of ${pageUrl} (${fullPage ? "full page" : "viewport"}) ${engine.label}. ${ENGINE_NOTE}`,
+          },
+        ],
+      };
+    }),
+  ),
 );
 
 server.registerTool(

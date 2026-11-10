@@ -13,6 +13,7 @@ import {
   saveClaudeUserConfig,
   type StdioServerEntry,
 } from "./claudeCodeConfig.js";
+import { isDeadCdpSessionMessage } from "./cdpSession.js";
 import { BUG_REPORT_URL, buildDiagnostics, reportIssueUrl } from "./issueReport.js";
 
 // Extension host side of the browser-tab bridge.
@@ -37,6 +38,30 @@ const SETTING = "browserTool.browserTab";
 const PROPOSAL_KEY = "enable-proposed-api";
 const CLAUDE_OFFER_DISMISSED = "browserTool.claudeCodeOfferDismissed";
 const MCP_PROVIDER_ID = "browser-tool";
+const CDP_PING_TIMEOUT_MS = 1_000;
+const CDP_RECOVERY_COOLDOWN_MS = 10_000;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function readCdpResponse(message: unknown): { id: number; error?: string; result: unknown } | undefined {
+  if (typeof message !== "object" || message === null) return undefined;
+  if (!("id" in message) || typeof message.id !== "number") return undefined;
+  const result = "result" in message ? message.result : undefined;
+  if (!("error" in message) || message.error == null) return { id: message.id, result };
+  if (typeof message.error !== "object") return { id: message.id, result, error: "CDP command failed" };
+  if (!("message" in message.error) || typeof message.error.message !== "string" || message.error.message === "") {
+    return { id: message.id, result, error: "CDP command failed" };
+  }
+  return { id: message.id, result, error: message.error.message };
+}
+
+function cookieList(result: unknown): unknown {
+  if (typeof result !== "object" || result === null) return [];
+  if (!("cookies" in result) || !Array.isArray(result.cookies)) return [];
+  return result.cookies;
+}
 
 type OpenTabFn = (url: string, options?: { preserveFocus?: boolean }) => Thenable<vscode.BrowserTab>;
 
@@ -122,6 +147,8 @@ class TabBridge {
   private cdp: vscode.BrowserCDPSession | undefined;
   private cdpSeq = 1;
   private server: net.Server | null = null;
+  private tabOperation: Promise<void> = Promise.resolve();
+  private recoveryFailedAt = 0;
 
   constructor(
     private readonly out: vscode.OutputChannel,
@@ -148,40 +175,121 @@ class TabBridge {
     Promise.resolve(session.close()).catch(() => undefined);
   }
 
-  // One tab at a time. Prefer steering the existing tab via CDP (Page.navigate)
-  // so the user's view doesn't flicker; fall back to close + reopen.
-  async handle(url: string): Promise<void> {
-    if (this.ourTab && this.cdp) {
-      try {
-        await this.cdp.sendMessage({ id: this.cdpSeq++, method: "Page.navigate", params: { url } });
-        return;
-      } catch {
-        this.closeCdp();
-      }
+  private enqueueTabOperation(operation: () => Promise<void>): Promise<void> {
+    const run = this.tabOperation.then(operation, operation);
+    this.tabOperation = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private currentTabUrl(): string | undefined {
+    const tab = this.ourTab;
+    if (!tab) return undefined;
+    try {
+      return tab.url || undefined;
+    } catch {
+      return undefined;
     }
-    if (this.ourTab) {
-      const old = this.ourTab;
-      this.ourTab = undefined;
-      await Promise.resolve(old.close()).catch(() => undefined);
+  }
+
+  private async closeOurTab(): Promise<void> {
+    if (!this.ourTab) return;
+    const old = this.ourTab;
+    this.ourTab = undefined;
+    await Promise.resolve(old.close()).catch(() => undefined);
+  }
+
+  private async attachCdp(tab: vscode.BrowserTab): Promise<void> {
+    if (typeof tab.startCDPSession !== "function") return;
+    try {
+      const session = await tab.startCDPSession();
+      this.cdp = session;
+      this.disposables.push(
+        session.onDidClose(() => {
+          if (this.cdp === session) this.cdp = undefined;
+        }),
+      );
+      this.out.appendLine("CDP session attached; subsequent navigates reuse the tab.");
+    } catch (error) {
+      this.cdp = undefined;
+      this.out.appendLine(
+        `CDP session unavailable (will reopen the tab on navigate): ${errorMessage(error)}`,
+      );
     }
+  }
+
+  private async replaceTab(url: string): Promise<void> {
+    this.closeCdp();
+    await this.closeOurTab();
     const tab = await this.openTab(url, { preserveFocus: true });
     this.ourTab = tab;
     this.out.appendLine(`Opened browser tab: ${tab.url}`);
-    if (typeof tab.startCDPSession === "function") {
+    await this.attachCdp(tab);
+  }
+
+  // One tab at a time. Prefer steering the existing tab via CDP (Page.navigate)
+  // so the user's view doesn't flicker; fall back to close + reopen.
+  // sendMessage() resolves when the message is sent, not when the target
+  // answers, so navigate goes through sendCdp and a dead target is observable.
+  async handle(url: string): Promise<void> {
+    await this.enqueueTabOperation(() => this.navigateOrReplace(url));
+  }
+
+  private async navigateOrReplace(url: string): Promise<void> {
+    if (this.ourTab && this.cdp) {
       try {
-        const session = await tab.startCDPSession();
-        this.cdp = session;
-        this.disposables.push(session.onDidClose(() => (this.cdp = undefined)));
-        this.out.appendLine("CDP session attached; subsequent navigates reuse the tab.");
-      } catch (e) {
-        this.cdp = undefined;
-        this.out.appendLine(
-          `CDP session unavailable (will reopen the tab on navigate): ${
-            e instanceof Error ? e.message : String(e)
-          }`,
-        );
+        await this.sendCdp("Page.navigate", { url }, 15_000);
+        return;
+      } catch (error) {
+        this.out.appendLine(`Page.navigate failed (${errorMessage(error)}); reopening the tab.`);
+        this.closeCdp();
       }
     }
+    await this.replaceTab(url);
+  }
+
+  private async reopenIfStillDead(): Promise<void> {
+    if (await this.pingCdp()) return;
+    const url = this.currentTabUrl();
+    if (!url) {
+      this.closeCdp();
+      return;
+    }
+    this.out.appendLine(`CDP session is not responding; reopening ${url}.`);
+    this.closeCdp();
+    await this.replaceTab(url);
+  }
+
+  // True only when the attached session answers a command. A dead target is
+  // reopened once; repeated failures back off so a broken tab is not reopened
+  // on every tool call.
+  private async cdpIsLive(): Promise<boolean> {
+    if (await this.pingCdp()) return true;
+    if (!this.currentTabUrl()) {
+      this.closeCdp();
+      return false;
+    }
+    if (Date.now() - this.recoveryFailedAt < CDP_RECOVERY_COOLDOWN_MS) return false;
+    try {
+      await this.enqueueTabOperation(() => this.reopenIfStillDead());
+    } catch (error) {
+      this.out.appendLine(`CDP recovery failed: ${errorMessage(error)}`);
+      this.recoveryFailedAt = Date.now();
+      return false;
+    }
+    const alive = await this.pingCdp();
+    this.recoveryFailedAt = alive ? 0 : Date.now();
+    return alive;
+  }
+
+  private pingCdp(): Promise<boolean> {
+    if (!this.cdp) return Promise.resolve(false);
+    return this.sendCdp("Runtime.evaluate", { expression: "1", returnByValue: true }, CDP_PING_TIMEOUT_MS).then(
+      () => true,
+      () => false,
+    );
   }
 
   // Correlate a CDP command with its async response. sendMessage() resolves
@@ -189,41 +297,49 @@ class TabBridge {
   // onDidReceiveMessage, so we subscribe first, then send, then wait for the
   // message whose `id` matches. Non-matching messages (CDP events, other
   // commands' responses) are ignored.
-  private cdpRequest<T = unknown>(
-    method: string,
-    params: Record<string, unknown> = {},
-    timeoutMs = 5000,
-  ): Promise<T> {
+  private sendCdp(method: string, params: Record<string, unknown>, timeoutMs: number): Promise<unknown> {
     const session = this.cdp;
     if (!session) return Promise.reject(new Error("no CDP session attached to the integrated tab"));
     const id = this.cdpSeq++;
-    return new Promise<T>((resolve, reject) => {
+    return new Promise((resolve, reject) => {
       let settled = false;
-      const dispose = session.onDidReceiveMessage((msg) => {
-        const m = msg as { id?: number; result?: T; error?: { message?: string } };
-        if (!m || typeof m.id !== "number" || m.id !== id) return;
+      const finish = (error?: Error, result?: unknown): void => {
         if (settled) return;
         settled = true;
         dispose.dispose();
         clearTimeout(timer);
-        if (m.error) reject(new Error(m.error.message ?? "CDP command failed"));
-        else resolve(m.result as T);
+        if (error) reject(error);
+        else resolve(result);
+      };
+      const dispose = session.onDidReceiveMessage((msg) => {
+        const reply = readCdpResponse(msg);
+        if (!reply || reply.id !== id) return;
+        if (reply.error) finish(new Error(reply.error));
+        else finish(undefined, reply.result);
       });
       const timer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        dispose.dispose();
-        reject(new Error(`CDP ${method} timed out after ${timeoutMs}ms`));
+        finish(new Error(`CDP ${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      // sendMessage returns a Thenable (no .catch) — wrap to reject on send failure.
-      Promise.resolve(session.sendMessage({ id, method, params })).catch((e: unknown) => {
-        if (settled) return;
-        settled = true;
-        dispose.dispose();
-        clearTimeout(timer);
-        reject(e instanceof Error ? e : new Error(String(e)));
+      Promise.resolve(session.sendMessage({ id, method, params })).catch((error: unknown) => {
+        finish(new Error(`CDP session send failed: ${errorMessage(error)}`));
       });
     });
+  }
+
+  private async cdpRequest(method: string, params: Record<string, unknown> = {}, timeoutMs = 5000): Promise<unknown> {
+    try {
+      return await this.sendCdp(method, params, timeoutMs);
+    } catch (error) {
+      if (!isDeadCdpSessionMessage(errorMessage(error), method)) throw error;
+      try {
+        await this.enqueueTabOperation(() => this.reopenIfStillDead());
+      } catch (recoveryError) {
+        this.out.appendLine(`CDP recovery failed: ${errorMessage(recoveryError)}`);
+        throw error;
+      }
+      if (!this.cdp) throw error;
+      return this.sendCdp(method, params, timeoutMs);
+    }
   }
 
   // Pull all cookies the integrated tab's context holds. Prefer
@@ -231,14 +347,10 @@ class TabBridge {
   // Network.getCookies if that domain is unavailable in this WebView2.
   private async fetchCookies(): Promise<unknown> {
     try {
-      const result = await this.cdpRequest<{ cookies: unknown[] }>("Storage.getCookies");
-      return result?.cookies ?? [];
-    } catch (e) {
-      this.out.appendLine(
-        `Storage.getCookies failed (${e instanceof Error ? e.message : String(e)}); trying Network.getCookies`,
-      );
-      const result = await this.cdpRequest<{ cookies: unknown[] }>("Network.getCookies");
-      return result?.cookies ?? [];
+      return cookieList(await this.cdpRequest("Storage.getCookies"));
+    } catch (error) {
+      this.out.appendLine(`Storage.getCookies failed (${errorMessage(error)}); trying Network.getCookies`);
+      return cookieList(await this.cdpRequest("Network.getCookies"));
     }
   }
 
@@ -271,12 +383,17 @@ class TabBridge {
           return;
         }
         if (req.action === "status") {
-          this.replyRaw(sock, {
-            ok: true,
-            present: !!this.ourTab,
-            cdp: !!this.cdp,
-            url: this.ourTab?.url,
-          });
+          void this.cdpIsLive().then(
+            (cdp) => {
+              this.replyRaw(sock, {
+                ok: true,
+                present: !!this.ourTab,
+                cdp,
+                url: this.currentTabUrl(),
+              });
+            },
+            (error: unknown) => this.replyRaw(sock, { ok: false, error: errorMessage(error) }),
+          );
           return;
         }
         if (req.action === "cdp") {

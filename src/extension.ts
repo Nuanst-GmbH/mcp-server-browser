@@ -1,7 +1,18 @@
 import * as vscode from "vscode";
+import { execFile } from "node:child_process";
 import * as net from "node:net";
 import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import { hostPipePath } from "./bridge.js";
+import {
+  ClaudeConfigInvalid,
+  editClaudeUserConfig,
+  nodeMajor,
+  readClaudeUserConfig,
+  saveClaudeUserConfig,
+  type StdioServerEntry,
+} from "./claudeCodeConfig.js";
 import { isDeadCdpSessionMessage } from "./cdpSession.js";
 import { BUG_REPORT_URL, buildDiagnostics, reportIssueUrl } from "./issueReport.js";
 
@@ -25,6 +36,8 @@ import { BUG_REPORT_URL, buildDiagnostics, reportIssueUrl } from "./issueReport.
 
 const SETTING = "browserTool.browserTab";
 const PROPOSAL_KEY = "enable-proposed-api";
+const CLAUDE_OFFER_DISMISSED = "browserTool.claudeCodeOfferDismissed";
+const MCP_PROVIDER_ID = "browser-tool";
 const CDP_PING_TIMEOUT_MS = 1_000;
 const CDP_RECOVERY_COOLDOWN_MS = 10_000;
 
@@ -447,6 +460,129 @@ class TabBridge {
   }
 }
 
+function extensionError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function browserToolEntry(extensionPath: string): StdioServerEntry {
+  return { command: "node", args: [path.join(extensionPath, "dist", "server.js")] };
+}
+
+function installedNodeMajor(): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    execFile("node", ["-v"], { timeout: 5000, windowsHide: true }, (error, stdout) => {
+      if (error) resolve(undefined);
+      else resolve(nodeMajor(stdout));
+    });
+  });
+}
+
+async function addBrowserToolToClaudeCode(extensionPath: string): Promise<string> {
+  const major = await installedNodeMajor();
+  if (major === undefined || major < 20) {
+    return "Node.js 20 or newer must be on PATH before Claude Code can start browser-tool.";
+  }
+  const home = os.homedir();
+  let current: unknown;
+  try {
+    current = await readClaudeUserConfig(home);
+  } catch (error) {
+    if (error instanceof ClaudeConfigInvalid) {
+      return "Claude Code's user config (~/.claude.json) is not valid JSON, so browser-tool was not added.";
+    }
+    throw error;
+  }
+  const edit = editClaudeUserConfig(current, browserToolEntry(extensionPath));
+  if (edit.status === "invalid") {
+    return "Claude Code's user config (~/.claude.json) is not a JSON object, so browser-tool was not added.";
+  }
+  if (edit.status === "conflict") {
+    return "Claude Code already has an MCP server named browser-tool that points somewhere else. Remove that entry, then run this command again.";
+  }
+  if (edit.status === "unchanged") {
+    return "browser-tool is already in Claude Code. Start a new Claude Code chat to use it.";
+  }
+  await saveClaudeUserConfig(home, edit.config);
+  if (edit.status === "added") {
+    return "Added browser-tool to Claude Code. Start a new Claude Code chat to use it.";
+  }
+  return "Updated the browser-tool path in Claude Code. Start a new Claude Code chat to use it.";
+}
+
+function registerVsCodeMcpServer(context: vscode.ExtensionContext, out: vscode.OutputChannel): vscode.Disposable | undefined {
+  if (
+    !vscode.lm ||
+    typeof vscode.lm.registerMcpServerDefinitionProvider !== "function" ||
+    typeof vscode.McpStdioServerDefinition !== "function"
+  ) {
+    out.appendLine("This VS Code version has no MCP server provider API, so browser-tool was not registered.");
+    return undefined;
+  }
+  const version = typeof context.extension.packageJSON.version === "string" ? context.extension.packageJSON.version : undefined;
+  try {
+    return vscode.lm.registerMcpServerDefinitionProvider(MCP_PROVIDER_ID, {
+      provideMcpServerDefinitions: () => [
+        new vscode.McpStdioServerDefinition(
+          MCP_PROVIDER_ID,
+          process.execPath,
+          [context.asAbsolutePath(path.join("dist", "server.js"))],
+          undefined,
+          version,
+        ),
+      ],
+    });
+  } catch (error) {
+    out.appendLine(`MCP server was not registered with VS Code: ${extensionError(error)}`);
+    return undefined;
+  }
+}
+
+async function offerClaudeCode(context: vscode.ExtensionContext, out: vscode.OutputChannel): Promise<void> {
+  const home = os.homedir();
+  let current: unknown;
+  try {
+    current = await readClaudeUserConfig(home);
+  } catch (error) {
+    out.appendLine(`Claude Code config was not updated: ${extensionError(error)}`);
+    return;
+  }
+  const edit = editClaudeUserConfig(current, browserToolEntry(context.extensionPath));
+  if (edit.status === "refreshed") {
+    try {
+      await saveClaudeUserConfig(home, edit.config);
+      out.appendLine("Updated the browser-tool path in Claude Code.");
+    } catch (error) {
+      out.appendLine(`Claude Code config was not updated: ${extensionError(error)}`);
+    }
+    return;
+  }
+  if (edit.status !== "added" || context.globalState.get<boolean>(CLAUDE_OFFER_DISMISSED)) return;
+  const major = await installedNodeMajor();
+  if (major === undefined || major < 20) {
+    out.appendLine("Skipped the Claude Code prompt because Node.js 20 or newer is not on PATH.");
+    return;
+  }
+  const choice = await vscode.window.showInformationMessage(
+    "Add browser-tool to Claude Code? This writes your user MCP config so new Claude Code chats can use it.",
+    { modal: true },
+    "Add",
+    "Not now",
+  );
+  if (choice === "Not now") {
+    await context.globalState.update(CLAUDE_OFFER_DISMISSED, true);
+    return;
+  }
+  if (choice !== "Add") return;
+  try {
+    const message = await addBrowserToolToClaudeCode(context.extensionPath);
+    out.appendLine(message);
+    void vscode.window.showInformationMessage(message);
+  } catch (error) {
+    out.appendLine(`Add to Claude Code failed: ${extensionError(error)}`);
+    void vscode.window.showErrorMessage(`MCP Server: Browser: ${extensionError(error)}`);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Activation
 // ---------------------------------------------------------------------------
@@ -462,8 +598,24 @@ export function activate(context: vscode.ExtensionContext): void {
 
   let bridge: TabBridge | null = null;
 
+  const mcp = registerVsCodeMcpServer(context, out);
+  if (mcp) disposables.push(mcp);
+
   const enable = (): Thenable<void> => enableProposal(extId, out);
   disposables.push(vscode.commands.registerCommand("browserTool.enableBrowserTabApi", enable));
+  disposables.push(
+    vscode.commands.registerCommand("browserTool.addToClaudeCode", async () => {
+      try {
+        const message = await addBrowserToolToClaudeCode(context.extensionPath);
+        out.appendLine(message);
+        void vscode.window.showInformationMessage(message);
+      } catch (error) {
+        const message = extensionError(error);
+        out.appendLine(`Add to Claude Code failed: ${message}`);
+        void vscode.window.showErrorMessage(`MCP Server: Browser: ${message}`);
+      }
+    }),
+  );
 
   // Opens the GitHub bug form with a diagnostics draft. The draft is not
   // uploaded until the user submits it. See PRIVACY.md for the field list.
@@ -545,4 +697,5 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
   );
   update();
+  void offerClaudeCode(context, out);
 }

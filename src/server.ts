@@ -396,7 +396,7 @@ async function runOnEngine(run: (engine: Engine) => Promise<ToolResult>): Promis
 // Server
 // ---------------------------------------------------------------------------
 
-const server = new McpServer({ name: "browser-tool", version: "0.4.0" });
+const server = new McpServer({ name: "browser-tool", version: "0.5.0" });
 
 server.registerTool(
   "open_url",

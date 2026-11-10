@@ -2,7 +2,7 @@
   "name": "mcp-server-browser",
   "displayName": "MCP Server: Browser",
   "description": "MCP browser tools for AI agents: a headless Chromium opens pages and performs clicks, typing, JS evaluation, and screenshots.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "Nuanst-GmbH",
   "author": "Nuanst One GmbH",
   "license": "MIT",
@@ -54,23 +54,23 @@
         "category": "Browser Tool"
       },
       {
+        "command": "browserTool.addToClaudeCode",
+        "title": "Add browser-tool to Claude Code",
+        "category": "Browser Tool"
+      },
+      {
         "command": "browserTool.reportIssue",
         "title": "MCP Server: Browser: Report Issue",
         "icon": "$(bug)",
         "category": "Browser Tool"
       }
     ],
-    "mcp": {
-      "servers": [
-        {
-          "label": "browser-tool",
-          "command": "node",
-          "args": [
-            "${extensionPath}/dist/server.js"
-          ]
-        }
-      ]
-    },
+    "mcpServerDefinitionProviders": [
+      {
+        "id": "browser-tool",
+        "label": "Browser Tool"
+      }
+    ],
     "configuration": [
       {
         "title": "Browser Tool",

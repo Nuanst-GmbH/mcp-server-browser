@@ -19,9 +19,14 @@ Copilot, or any MCP client) open any URL in a browser and interact with it.
 
 ## Installation
 
-Install the **MCP Server: Browser** extension from the VS Code Marketplace. The extension
-registers the `browser-tool` MCP server with VS Code's MCP client (VS Code 1.104 or newer,
-which introduced the `mcpServers` contribution point).
+Install the **MCP Server: Browser** extension from the VS Code Marketplace. On startup it
+registers the `browser-tool` MCP server with VS Code (1.104 or newer).
+
+Claude Code keeps its own MCP list. The first time the extension starts, it offers to add
+`browser-tool` there. You can do the same later from the Command Palette:
+**Browser Tool: Add browser-tool to Claude Code**. That writes your user config
+(`~/.claude.json`) and needs Node.js 20 or newer on `PATH`. Start a new Claude Code chat
+afterward. A project-local server with the same name takes precedence over this user entry.
 
 <details>
 <summary><b>Manual installation / use outside VS Code</b></summary>

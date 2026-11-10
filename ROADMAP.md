@@ -8,7 +8,7 @@ Two agents in the same VS Code window that both use this MCP server act on one p
 
 ### How it works today
 
-- VS Code starts one `browser-tool` server process per window (`contributes.mcp` in `package.json`).
+- VS Code starts one `browser-tool` server process per window (`mcpServerDefinitionProviders` in `package.json`, registered from `activate`).
 - Each window has its own pipe, `vscode-browser-tool-<extension-host pid>`. The server finds that host by walking parent processes up to `Code.exe` (`src/bridge.ts`). A second window gets its own integrated tab and its own headless Chromium, and it does not attach to another window's tab.
 - Inside one window there is one Playwright page for the life of the server (`src/browser.ts`) and one integrated browser tab (`TabBridge` in `src/extension.ts`).
 - Tool calls carry no agent id. Nothing queues or locks them. `close` tears down the headless browser for every client of that process.

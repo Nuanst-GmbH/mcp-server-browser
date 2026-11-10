@@ -4,6 +4,17 @@ All notable changes to the **MCP Server: Browser** extension are documented here
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-10
+
+### Added
+
+- On startup the extension registers `browser-tool` with VS Code.
+- **Browser Tool: Add browser-tool to Claude Code** writes that server into the Claude Code user config (`~/.claude.json`). The same offer appears the first time the extension starts. Start a new Claude Code chat afterward. Node.js 20 or newer must be on `PATH`.
+
+### Fixed
+
+- A recycled integrated-browser WebView no longer leaves a dead CDP session that makes every tool fail. The tab is reopened, and a call that still fails runs on the headless twin.
+
 ## [0.4.0] - 2026-10-30
 
 ### Added
@@ -105,6 +116,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - E2E smoke test (`scripts/e2e.mjs`) driving the server over stdio against a
   local test page (`npm run testpage`).
 
+[0.5.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.3.0
 [0.2.2]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.2.2

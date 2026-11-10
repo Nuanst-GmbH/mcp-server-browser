@@ -244,7 +244,15 @@ export interface BridgeCookie {
   sameSite?: string;
 }
 
-export type CookieResponse = { ok: true; cookies: BridgeCookie[] } | { ok: false; error: string };
+export type CookieSource = "network" | "storage" | "document";
+
+export type CookieResponse =
+  | { ok: true; cookies: BridgeCookie[]; source?: CookieSource }
+  | { ok: false; error: string };
+
+function cookieSource(value: unknown): CookieSource | undefined {
+  return value === "network" || value === "storage" || value === "document" ? value : undefined;
+}
 
 // Ask the extension host for the integrated tab's cookies (it reads them via
 // its live CDP session) and get them back.
@@ -254,14 +262,14 @@ export function requestCookies(timeoutMs = 8000): Promise<CookieResponse> {
       p
         ? pipeLine(p, { action: "getCookies" }, timeoutMs).then(
             (line) => {
-              let parsed: { ok?: boolean; cookies?: BridgeCookie[]; error?: string };
+              let parsed: { ok?: boolean; cookies?: BridgeCookie[]; source?: unknown; error?: string };
               try {
                 parsed = JSON.parse(line);
               } catch {
                 return { ok: false, error: "invalid JSON from the cookie bridge" } as CookieResponse;
               }
               if (parsed && parsed.ok && Array.isArray(parsed.cookies)) {
-                return { ok: true, cookies: parsed.cookies };
+                return { ok: true, cookies: parsed.cookies, source: cookieSource(parsed.source) };
               }
               return { ok: false, error: parsed?.error ?? "cookie bridge returned no cookies" };
             },
@@ -272,7 +280,7 @@ export function requestCookies(timeoutMs = 8000): Promise<CookieResponse> {
 }
 
 export type TabStatusResponse =
-  | { ok: true; present: boolean; cdp: boolean; url?: string }
+  | { ok: true; present: boolean; cdp: boolean; url?: string; reason?: string }
   | { ok: false; error: string };
 
 // Ask the extension host whether the integrated tab is present and its CDP
@@ -286,14 +294,15 @@ export function probeTabStatus(timeoutMs = TAB_STATUS_TIMEOUT_MS): Promise<TabSt
       p
         ? pipeLine(p, { action: "status" }, timeoutMs).then(
             (line) => {
-              let parsed: { ok?: boolean; present?: boolean; cdp?: boolean; url?: string; error?: string };
+              let parsed: { ok?: boolean; present?: boolean; cdp?: boolean; url?: string; reason?: string; error?: string };
               try {
                 parsed = JSON.parse(line);
               } catch {
                 return { ok: false, error: "invalid JSON from the status probe" } as TabStatusResponse;
               }
               if (parsed && parsed.ok && typeof parsed.present === "boolean") {
-                return { ok: true, present: parsed.present, cdp: !!parsed.cdp, url: parsed.url };
+                const reason = typeof parsed.reason === "string" && parsed.reason ? parsed.reason : undefined;
+                return { ok: true, present: parsed.present, cdp: !!parsed.cdp, url: parsed.url, reason };
               }
               return { ok: false, error: parsed?.error ?? "status probe returned no status" };
             },

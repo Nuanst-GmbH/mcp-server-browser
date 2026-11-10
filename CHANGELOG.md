@@ -4,6 +4,13 @@ All notable changes to the **MCP Server: Browser** extension are documented here
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2026-11-10
+
+### Fixed
+
+- Integrated-browser tools no longer report `via headless twin (tab unavailable)` while a tab is open. Page CDP commands are sent on the page target. VS Code's browser CDP proxy answers `Method not found` for page methods sent on the browser session. A tab the user already opened is used.
+- `sync_cookies` reads cookies with `Network.getCookies` on that page session, including HttpOnly SSO cookies. If the browser does not implement that method, it uses `document.cookie` and says that HttpOnly cookies were left out, instead of failing with `Method not found: Network.getCookies`.
+
 ## [0.5.0] - 2026-11-10
 
 ### Added
@@ -116,6 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - E2E smoke test (`scripts/e2e.mjs`) driving the server over stdio against a
   local test page (`npm run testpage`).
 
+[0.5.1]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.5.1
 [0.5.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.4.0
 [0.3.0]: https://github.com/Nuanst-GmbH/mcp-server-browser/releases/tag/v0.3.0
